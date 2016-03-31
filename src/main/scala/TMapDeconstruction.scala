@@ -17,6 +17,10 @@ Fragen:
   - Muss vor dem Befüttern der Goals sein
   - Sollte nach dem Learning sein (Learning liefert nur die notwendigen Parameter)
 - Wo werden die Tags gesetzt?
+
+
+Wie umsetzen:
+- IsProductOf Evidenz implicit, z.B. IsProductOf[Clicks, (Impressions, Ctr)] = Clicks IsProductOf (Impressions, Ctr)
  */
 
 import Tagging._
@@ -38,6 +42,8 @@ class Conversions extends Kpi
 class Position extends Kpi
 
 class Bid extends Kpi
+
+trait IsProductOf[P,F1, F2]
 
 trait CanCreatePredictor {
   type P
@@ -61,7 +67,7 @@ case class LinearModelParameters(val m: Double, val b: Double)
 case class ExponentialModelParameters(val e: Double)
 
 object TMapDeconstruction extends App {
-
+  implicit val clicksIsProductOfImpressionsAndCtr = new IsProductOf[Clicks, Impressions, Ctr] {}
   implicit def linearModelParameters2Predictor[ITag, OTag] = new CanCreatePredictor {
     type P = LinearModelParameters @@ (ITag, OTag)
     type I = Double @@ ITag
@@ -90,27 +96,29 @@ object TMapDeconstruction extends App {
   }
 
 
-  implicit def clicksFromImpressionsAndCtr[ImpParam, CtrParam, IType, OType, ITag](
+  implicit def productFromFactors2Predictor[F1Param, F2Param, F1OTag, F2OTag, POTag, IType, OType, ITag](
     implicit canCreateImpressionPredictor: CanCreatePredictor {
-      type P = ImpParam @@ (ITag, Impressions)
+      type P = F1Param @@ (ITag, F1OTag)
       type I = IType @@ ITag
-      type O = OType @@ Impressions
+      type O = OType @@ F1OTag
     }, canCreateCtrPredictor: CanCreatePredictor {
-      type P = CtrParam @@ (ITag, Ctr)
+      type P = F2Param @@ (ITag, F2OTag)
       type I = IType @@ ITag
-      type O = OType @@ Ctr
-    }) = new CanCreatePredictor {
+      type O = OType @@ F2OTag
+    },
+    prodEv: IsProductOf[POTag, F1OTag, F2OTag]
+    ) = new CanCreatePredictor {
 
-    type P = (ImpParam @@ (ITag, Impressions), CtrParam @@ (ITag, Ctr))
+    type P = (F1Param @@ (ITag, F1OTag), F2Param @@ (ITag, F2OTag))
     type I = IType @@ ITag
-    type O = OType @@ Clicks
+    type O = OType @@ POTag
 
     def createPredictor(p: P): I => O = {
-      val impPred = canCreateImpressionPredictor.createPredictor(p._1)
-      val ctrPred = canCreateCtrPredictor.createPredictor(p._2)
-      new (IType @@ ITag => OType @@ Clicks) {
-        def apply(i: IType @@ ITag) = impPred(i).untag.tag[Clicks]
-        override def toString = s"Composite Predictor from $impPred and $ctrPred"
+      val f1Pred = canCreateImpressionPredictor.createPredictor(p._1)
+      val f2Pred = canCreateCtrPredictor.createPredictor(p._2)
+      new (IType @@ ITag => OType @@ POTag) {
+        def apply(i: IType @@ ITag) = f1Pred(i).untag.tag[POTag]
+        override def toString = s"Composite Predictor from $f1Pred and $f2Pred"
       }
     }
 

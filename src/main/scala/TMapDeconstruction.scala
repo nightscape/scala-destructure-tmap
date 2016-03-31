@@ -1,14 +1,14 @@
 /*
 Was soll rauskommen:
 
-- Goals bekommen nur eine I => O
-  - I und O korrekt getagged, z.B. Double @@ Position => Double @@ Cost
++ Goals bekommen nur eine I => O
+  + I und O korrekt getagged, z.B. Double @@ Position => Double @@ Cost
 - Je nachdem, was mein Start-Input ist, soll I sein
   - Double @@ Position
   - Double @@ Bid
-- Generieren der notwendigen Predictor-Funktionen passiert automatisch
++ Generieren der notwendigen Predictor-Funktionen passiert automatisch
 - Zusammenstöpseln der notwendigen Teilfunktionen passiert automatisch
-- ? Implicits stöpseln keine Daten, sondern nur Stateless, Dataless Typeclasses
++ Implicits stöpseln keine Daten, sondern nur Stateless, Dataless Typeclasses
 
 
 
@@ -81,12 +81,11 @@ object TMapDeconstruction extends App {
     type I = Double @@ ITag
     type O = Double @@ OTag
     def createPredictor(p: P) = {
-      val pred = new ExponentialPredictor(p.e)
-      val f = new Function1[Double @@ ITag, Double @@ OTag] {
-        def apply(i: (Double @@ ITag)) = new Taggable(pred(i)).tag[OTag]
-        override def toString: String = pred.toString()
+      val predictor = new ExponentialPredictor(p.e)
+      new (Double @@ ITag => Double @@ OTag) {
+        def apply(i: (Double @@ ITag)) = new Taggable(predictor(i)).tag[OTag]
+        override def toString: String = predictor.toString()
       }
-      f
     }
   }
 
@@ -109,16 +108,15 @@ object TMapDeconstruction extends App {
     def createPredictor(p: P): I => O = {
       val impPred = canCreateImpressionPredictor.createPredictor(p._1)
       val ctrPred = canCreateCtrPredictor.createPredictor(p._2)
-      val f = new Function1[IType @@ ITag, OType @@ Clicks] {
+      new (IType @@ ITag => OType @@ Clicks) {
         def apply(i: IType @@ ITag) = impPred(i).untag.tag[Clicks]
         override def toString = s"Composite Predictor from $impPred and $ctrPred"
       }
-      f
     }
 
   }
-  implicit class RichParams[MP, IType, OType, ITag, OTag](p: MP @@ (ITag, OTag))
-  (implicit ccp: CanCreatePredictor { type P = MP @@ (ITag, OTag) ; type I = IType @@ ITag; type O = OType @@ OTag}) {
+  implicit class RichParams[MP, IType, OType, ITag, OTag](p: MP)
+  (implicit ccp: CanCreatePredictor { type P = MP ; type I = IType @@ ITag; type O = OType @@ OTag}) {
     def toPredictor: IType @@ ITag => OType @@ OTag = ccp.createPredictor(p)
   }
 
@@ -126,8 +124,13 @@ object TMapDeconstruction extends App {
   val position2ctr = ExponentialModelParameters(3.0).tag[(Position, Ctr)]
   val position2impressionPredictor: (Double @@ Position) => (Double @@ Impressions) = position2impression.toPredictor
   val position2ctrPredictor: (Double @@ Position) => (Double @@ Ctr) = position2ctr.toPredictor
-  //new RichParams[(LinearModelParameters @@ (Position, Impressions), ExponentialModelParameters @@ (Position, Ctr)), Double, Double, Position, Clicks]((position2impression, position2ctr).tag[(Position, Clicks)]).toPredictor
-  println(position2impressionPredictor)
+  import scala.reflect.runtime.universe.TypeTag
+  def typeString[A](a: A)(implicit evA: TypeTag[A]) = evA.toString()
+
+
+
+  println(typeString((position2impression, position2ctr).toPredictor))
+  println(typeString(position2impressionPredictor))
   println(position2ctrPredictor)
   println(position2impressionPredictor.apply(2.0.tag[Position]))
 }

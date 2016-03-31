@@ -1,78 +1,85 @@
+/*
+Was soll rauskommen:
+
+- Goals bekommen nur eine I => O
+  - I und O korrekt getagged, z.B. Double @@ Position => Double @@ Cost
+- Je nachdem, was mein Start-Input ist, soll I sein
+  - Double @@ Position
+  - Double @@ Bid
+- Generieren der notwendigen Predictor-Funktionen passiert automatisch
+- Zusammenstöpseln der notwendigen Teilfunktionen passiert automatisch
+- ? Implicits stöpseln keine Daten, sondern nur Stateless, Dataless Typeclasses
+
+
+
+Fragen:
+- Wo werden Daten und Typeclasses gejoined?
+  - Muss vor dem Befüttern der Goals sein
+  - Sollte nach dem Learning sein (Learning liefert nur die notwendigen Parameter)
+- Wo werden die Tags gesetzt?
+ */
+
 import Tagging._
 
 import scala.reflect.runtime.universe._
 
+sealed trait Kpi
+
+class Impressions extends Kpi
+
+class Clicks extends Kpi
+
+class Ctr extends Kpi
+
+class ConversionRate extends Kpi
+
+class Conversions extends Kpi
+
+class Position extends Kpi
+
+class Bid extends Kpi
+
+trait CanCreatePredictor {
+  type P
+  type I
+  type O
+  def createPredictor(p: P): I => O
+}
+
+class LinearPredictor(val m: Double, val b: Double) extends (Double => Double) {
+  def apply(x: Double) = m * x + b
+  override def toString = s"LinearPredictor(m = $m, b = $b)"
+}
+
+class ExponentialPredictor(val e: Double) extends (Double => Double) {
+  def apply(x: Double) = scala.math.pow(e, x)
+  override def toString = s"ExponentialPredictor(e = $e)"
+}
+
+case class LinearModelParameters(val m: Double, val b: Double)
+
 object TMapDeconstruction extends App {
 
-  sealed class =!=[A, B]
-
-  trait LowerPriorityImplicits {
-    /** do not call explicitly! */
-    implicit def equal[A]: =!=[A, A] = sys.error("should not be called")
+  implicit def linearModelParameters2Predictor[ITag, OTag] = new CanCreatePredictor {
+    type P = LinearModelParameters @@ (ITag, OTag)
+    type I = Double @@ ITag
+    type O = Double @@ OTag
+    def createPredictor(p: P) = {
+      val pred = new LinearPredictor(p.m, p.b)
+      val f = new Function1[Double @@ ITag, Double @@ OTag] {
+        def apply(i: (Double @@ ITag)) = new Taggable(pred(i)).tag[OTag]
+        override def toString: String = pred.toString()
+      }
+      f
+    }
   }
 
-  object =!= extends LowerPriorityImplicits {
-    /** do not call explicitly! */
-    implicit def nequal[A, B]: =!=[A, B] = new =!=[A, B]
+  implicit class RichParams[MP, IType, OType, ITag, OTag](p: MP @@ (ITag, OTag))
+  (implicit ccp: CanCreatePredictor { type P = MP @@ (ITag, OTag) ; type I = IType @@ ITag; type O = OType @@ OTag}) {
+    def toPredictor: IType @@ ITag => OType @@ OTag = ccp.createPredictor(p)
   }
 
-  sealed trait Kpi
-
-  class Impressions extends Kpi
-
-  class Clicks extends Kpi
-
-  class Ctr extends Kpi
-
-  class ConversionRate extends Kpi
-
-  class Conversions extends Kpi
-
-
-  trait Show[T, O] {
-    def show(t: T): O
-  }
-
-  implicit val showInt = new Show[Int, String] {
-    def show(t: Int) = s"int $t"
-  }
-  implicit val showString = new Show[String, String] {
-    def show(t: String) = s"String $t"
-  }
-  implicit val showImpressions = new Show[Double @@ Impressions, String @@ Impressions] {
-    def show(t: Double @@ Impressions) = s"Impressions $t".tag[Impressions]
-  }
-
-  implicit val showCtr = new Show[Double @@ Ctr, String @@ Ctr] {
-    def show(t: Double @@ Ctr) = s"Ctr $t".tag[Ctr]
-  }
-  implicit val showCr = new Show[Double @@ ConversionRate, String @@ ConversionRate] {
-    def show(t: Double @@ ConversionRate) = s"Cr $t".tag[ConversionRate]
-  }
-
-  implicit def showClicks[I, C](implicit showImpressions: Show[I @@ Impressions, String @@ Impressions],
-                                showCtr: Show[C @@ Ctr, String @@ Ctr],
-                                tti: TypeTag[I @@ Impressions],
-                                ttc: TypeTag[C @@ Ctr]
-                               ) = new Show[TMap[(I @@ Impressions) with (C @@ Ctr)], String @@ Clicks] {
-    def show(t: TMap[(I @@ Impressions) with (C @@ Ctr)]): String @@ Clicks =
-      s"""Clicks from ${showImpressions.show(t.apply[I @@ Impressions])}
-          |and ${showCtr.show(t.apply[C @@ Ctr])}
-       """.stripMargin.tag[Clicks]
-  }
-
-  implicit def showConversions(
-                                implicit
-                                showClicks: Show[TMap[(Double @@ Impressions) with (Double @@ Ctr)], String @@ Clicks],
-                                showCr: Show[Double @@ ConversionRate, String @@ ConversionRate]) = new Show[TMap[(Double @@ Impressions) with (Double @@ Ctr) with (Double @@ ConversionRate)], String @@ Conversions] {
-    override def show(t: TMap[(Double @@ Impressions) with (Double @@ Ctr) with (Double @@ ConversionRate)]): @@[String, Conversions] =
-      s"""Conversions from ${showClicks.show(TMap(t.apply[Double @@ Impressions]) ++ TMap(t.apply[Double @@ Ctr]))}
-          |and ${showCr.show(t.apply[Double @@ ConversionRate])}
-       """.stripMargin.tag[Conversions]
-  }
-
-  val p = TMap(0.5.tag[Impressions]) ++ TMap(0.3.tag[Ctr]) ++ TMap(0.05.tag[ConversionRate])
-  println(implicitly[Show[TMap[(Double @@ Impressions) with (Double @@ Ctr)], String @@ Clicks]].show(p))
-  println(implicitly[Show[TMap[(Double @@ Impressions) with (Double @@ Ctr) with (Double @@ ConversionRate)], String @@ Conversions]].show(p))
-
+  val position2impression = LinearModelParameters(1.0, 2.0).tag[(Position, Impressions)]
+  val predictor: (Double @@ Position) => (Double @@ Impressions) = position2impression.toPredictor
+  println(predictor)
 }

@@ -2,7 +2,7 @@ object Tagging {
   trait Tagged[+V, +T]
   type @@[+V, +T] = V with Tagged[V, T]
 
-  implicit class Taggable[V](val value: V) {
+  implicit class Taggable[V](val value: V) extends AnyVal {
     def tag[T] = value.asInstanceOf[V @@ T]
 
     def tagAs[T <: V @@ _] = value.asInstanceOf[T]

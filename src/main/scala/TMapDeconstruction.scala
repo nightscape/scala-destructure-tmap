@@ -58,6 +58,8 @@ class ExponentialPredictor(val e: Double) extends (Double => Double) {
 
 case class LinearModelParameters(val m: Double, val b: Double)
 
+case class ExponentialModelParameters(val e: Double)
+
 object TMapDeconstruction extends App {
 
   implicit def linearModelParameters2Predictor[ITag, OTag] = new CanCreatePredictor {
@@ -74,12 +76,58 @@ object TMapDeconstruction extends App {
     }
   }
 
+  implicit def exponentialModelParameters2Predictor[ITag, OTag] = new CanCreatePredictor {
+    type P = ExponentialModelParameters @@ (ITag, OTag)
+    type I = Double @@ ITag
+    type O = Double @@ OTag
+    def createPredictor(p: P) = {
+      val pred = new ExponentialPredictor(p.e)
+      val f = new Function1[Double @@ ITag, Double @@ OTag] {
+        def apply(i: (Double @@ ITag)) = new Taggable(pred(i)).tag[OTag]
+        override def toString: String = pred.toString()
+      }
+      f
+    }
+  }
+
+
+  implicit def clicksFromImpressionsAndCtr[ImpParam, CtrParam, IType, OType, ITag](
+    implicit canCreateImpressionPredictor: CanCreatePredictor {
+      type P = ImpParam @@ (ITag, Impressions)
+      type I = IType @@ ITag
+      type O = OType @@ Impressions
+    }, canCreateCtrPredictor: CanCreatePredictor {
+      type P = CtrParam @@ (ITag, Ctr)
+      type I = IType @@ ITag
+      type O = OType @@ Ctr
+    }) = new CanCreatePredictor {
+
+    type P = (ImpParam @@ (ITag, Impressions), CtrParam @@ (ITag, Ctr))
+    type I = IType @@ ITag
+    type O = OType @@ Clicks
+
+    def createPredictor(p: P): I => O = {
+      val impPred = canCreateImpressionPredictor.createPredictor(p._1)
+      val ctrPred = canCreateCtrPredictor.createPredictor(p._2)
+      val f = new Function1[IType @@ ITag, OType @@ Clicks] {
+        def apply(i: IType @@ ITag) = impPred(i).untag.tag[Clicks]
+        override def toString = s"Composite Predictor from $impPred and $ctrPred"
+      }
+      f
+    }
+
+  }
   implicit class RichParams[MP, IType, OType, ITag, OTag](p: MP @@ (ITag, OTag))
   (implicit ccp: CanCreatePredictor { type P = MP @@ (ITag, OTag) ; type I = IType @@ ITag; type O = OType @@ OTag}) {
     def toPredictor: IType @@ ITag => OType @@ OTag = ccp.createPredictor(p)
   }
 
   val position2impression = LinearModelParameters(1.0, 2.0).tag[(Position, Impressions)]
-  val predictor: (Double @@ Position) => (Double @@ Impressions) = position2impression.toPredictor
-  println(predictor)
+  val position2ctr = ExponentialModelParameters(3.0).tag[(Position, Ctr)]
+  val position2impressionPredictor: (Double @@ Position) => (Double @@ Impressions) = position2impression.toPredictor
+  val position2ctrPredictor: (Double @@ Position) => (Double @@ Ctr) = position2ctr.toPredictor
+  //new RichParams[(LinearModelParameters @@ (Position, Impressions), ExponentialModelParameters @@ (Position, Ctr)), Double, Double, Position, Clicks]((position2impression, position2ctr).tag[(Position, Clicks)]).toPredictor
+  println(position2impressionPredictor)
+  println(position2ctrPredictor)
+  println(position2impressionPredictor.apply(2.0.tag[Position]))
 }

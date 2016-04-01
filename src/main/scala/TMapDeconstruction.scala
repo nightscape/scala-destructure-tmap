@@ -68,6 +68,7 @@ case class ExponentialModelParameters(val e: Double)
 
 object TMapDeconstruction extends App {
   implicit val clicksIsProductOfImpressionsAndCtr = new IsProductOf[Clicks, Impressions, Ctr] {}
+  implicit val conversionsIsProductOfClicksAndCr = new IsProductOf[Conversions, Clicks, ConversionRate] {}
   implicit def linearModelParameters2Predictor[ITag, OTag] = new CanCreatePredictor {
     type P = LinearModelParameters @@ (ITag, OTag)
     type I = Double @@ ITag
@@ -106,16 +107,18 @@ object TMapDeconstruction extends App {
       type I = IType @@ ITag
       type O = OType @@ F2OTag
     },
-    prodEv: IsProductOf[POTag, F1OTag, F2OTag]
+    prodEv: IsProductOf[POTag, F1OTag, F2OTag],
+    f1tt: TypeTag[F1Param @@ (ITag, F1OTag)],
+    f2tt: TypeTag[F2Param @@ (ITag, F2OTag)]
     ) = new CanCreatePredictor {
 
-    type P = (F1Param @@ (ITag, F1OTag), F2Param @@ (ITag, F2OTag))
+    type P = MMap { type T <: (F1Param @@ (ITag, F1OTag)) with (F2Param @@ (ITag, F2OTag)) }
     type I = IType @@ ITag
     type O = OType @@ POTag
 
     def createPredictor(p: P): I => O = {
-      val f1Pred = canCreateImpressionPredictor.createPredictor(p._1)
-      val f2Pred = canCreateCtrPredictor.createPredictor(p._2)
+      val f1Pred = canCreateImpressionPredictor.createPredictor(p.apply[F1Param @@ (ITag, F1OTag)])
+      val f2Pred = canCreateCtrPredictor.createPredictor(p.apply[F2Param @@ (ITag, F2OTag)])
       new (IType @@ ITag => OType @@ POTag) {
         def apply(i: IType @@ ITag) = f1Pred(i).untag.tag[POTag]
         override def toString = s"Composite Predictor from $f1Pred and $f2Pred"
@@ -130,15 +133,27 @@ object TMapDeconstruction extends App {
 
   val position2impression = LinearModelParameters(1.0, 2.0).tag[(Position, Impressions)]
   val position2ctr = ExponentialModelParameters(3.0).tag[(Position, Ctr)]
+  val position2cr = ExponentialModelParameters(1.0).tag[(Position, ConversionRate)]
   val position2impressionPredictor: (Double @@ Position) => (Double @@ Impressions) = position2impression.toPredictor
   val position2ctrPredictor: (Double @@ Position) => (Double @@ Ctr) = position2ctr.toPredictor
-  import scala.reflect.runtime.universe.TypeTag
+  import scala.reflect.runtime.universe.{Position => _, _}
   def typeString[A](a: A)(implicit evA: TypeTag[A]) = evA.toString()
 
+  val ccc: CanCreatePredictor { type P = MMap {type T <: (LinearModelParameters @@ (Position, Impressions)) with (ExponentialModelParameters @@ (Position, Ctr))}; type I = Double @@ Position; type O = Double @@ Clicks} =
+    productFromFactors2Predictor[LinearModelParameters, ExponentialModelParameters, Impressions, Ctr, Clicks, Double, Double, Position]
 
-
-  println(typeString((position2impression, position2ctr).toPredictor))
+  val map = //: MMap {type T = (LinearModelParameters @@ (Position, Impressions)) with (ExponentialModelParameters @@ (Position, Ctr))} =
+    MMap(position2impression) ++ MMap(position2ctr)
+  println(map)
+  println(typeTag[map.type])
+//  println(new RichParams[map.type, Double, Double, Position, Clicks](map)(ccc).toPredictor)
+  ccc.createPredictor(map)
+  //println(typeString(((position2impression, position2ctr), position2cr).toPredictor))
+  //println(typeString(().toPredictor))
   println(typeString(position2impressionPredictor))
   println(position2ctrPredictor)
   println(position2impressionPredictor.apply(2.0.tag[Position]))
+
+  //println(typeString(MMap(3) ++ MMap("foo")))
+  println(MMap(3) ++ MMap("foo"))
 }
